@@ -1,5 +1,11 @@
 import 'dart:typed_data';
+import 'package:ar_furniture_app/api_consumer.dart';
+import 'package:ar_furniture_app/home_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart' as fStorage;
 
 class ItemsUpload extends StatefulWidget {
   const ItemsUpload({super.key});
@@ -22,6 +28,7 @@ class _ItemsUploadState extends State<ItemsUpload> {
       TextEditingController();
 
   bool isUploading = false;
+  String downloadUrlOfUploadedImage = "";
 
   //Upload form screen
   Widget uploadFormScreen() {
@@ -47,7 +54,12 @@ class _ItemsUploadState extends State<ItemsUpload> {
           Padding(
             padding: const EdgeInsets.all(4.0),
             child: IconButton(
-              onPressed: () {},
+              onPressed: () {
+                // validate upload form fields
+                if (isUploading != true) {
+                  validateUploadFormAndUploadItemInfo();
+                }
+              },
               icon: const Icon(
                 Icons.cloud_upload,
                 color: Colors.white,
@@ -191,7 +203,7 @@ class _ItemsUploadState extends State<ItemsUpload> {
             thickness: 1.0,
           ),
 
-          //item price
+          //Item price
           ListTile(
             leading: const Icon(
               Icons.price_change,
@@ -219,6 +231,73 @@ class _ItemsUploadState extends State<ItemsUpload> {
           ),
         ],
       ),
+    );
+  }
+
+  validateUploadFormAndUploadItemInfo() async {
+    if (imageFileUnint8List != null) {
+      if (sellerNameTextEditingController.text.isNotEmpty &&
+          sellerPhoneTextEditingController.text.isNotEmpty &&
+          itemNameTextEditingController.text.isNotEmpty &&
+          itemDescriptionTextEditingController.text.isNotEmpty &&
+          itemPriceTextEditingController.text.isNotEmpty) {
+        setState(() {
+          isUploading = true;
+        });
+
+        //1.  upload image to cloud
+        String imageUniqueName =
+            DateTime.now().microsecondsSinceEpoch.toString();
+
+        fStorage.Reference firebaseStorageRef = fStorage
+            .FirebaseStorage.instance
+            .ref()
+            .child("Items Images")
+            .child(imageUniqueName);
+
+        fStorage.UploadTask uploadTaskImageFile =
+            firebaseStorageRef.putData(imageFileUnint8List!);
+
+        fStorage.TaskSnapshot taskSnapshot =
+            await uploadTaskImageFile.whenComplete(() {});
+        await taskSnapshot.ref.getDownloadURL().then((imageDownloadUrl) {
+          downloadUrlOfUploadedImage = imageDownloadUrl;
+        });
+        //2.  save item info to firestore database
+        saveItemInfoToFirestore();
+      } else {
+        Fluttertoast.showToast(
+            msg: "Please complete upload form. Every field is mandatory");
+      }
+    } else {
+      Fluttertoast.showToast(msg: "Please select image file");
+    }
+  }
+
+  saveItemInfoToFirestore() {
+    String itemUniqueId = DateTime.now().microsecondsSinceEpoch.toString();
+    FirebaseFirestore.instance.collection("items").doc(itemUniqueId).set(
+      {
+        "itemID": itemUniqueId,
+        "itemName": itemNameTextEditingController.text,
+        "itemDescription": itemDescriptionTextEditingController.text,
+        "itemImage": downloadUrlOfUploadedImage,
+        "sellerName": sellerNameTextEditingController.text,
+        "sellerPhone": sellerPhoneTextEditingController.text,
+        "itemPrice": itemPriceTextEditingController.text,
+        "publishedDate": DateTime.now(),
+      },
+    );
+    Fluttertoast.showToast(msg: "Item uploaded successfully.");
+
+    setState(() {
+      isUploading = false;
+      imageFileUnint8List = null;
+    });
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
     );
   }
 
@@ -317,10 +396,60 @@ class _ItemsUploadState extends State<ItemsUpload> {
     );
   }
 
-  captureImageWithPhoneCamera() {}
-  choooseImageFromPhoneGallery() {}
+  captureImageWithPhoneCamera() async {
+    Navigator.pop(context);
+    try {
+      final pickedImage =
+          await ImagePicker().pickImage(source: ImageSource.camera);
+
+      if (pickedImage != null) {
+        String imagePath = pickedImage.path;
+        imageFileUnint8List = await pickedImage.readAsBytes();
+
+        //remove background from image
+        imageFileUnint8List =
+            await ApiConsumer().removeImageBackgroundApi(imagePath);
+
+        setState(() {
+          imageFileUnint8List;
+        });
+      }
+    } catch (errorMsg) {
+      print(errorMsg.toString());
+      setState(() {
+        imageFileUnint8List = null;
+      });
+    }
+  }
+
+  choooseImageFromPhoneGallery() async {
+    Navigator.pop(context);
+    try {
+      final pickedImage =
+          await ImagePicker().pickImage(source: ImageSource.gallery);
+
+      if (pickedImage != null) {
+        String imagePath = pickedImage.path;
+        imageFileUnint8List = await pickedImage.readAsBytes();
+
+        //remove background from imagg
+        imageFileUnint8List =
+            await ApiConsumer().removeImageBackgroundApi(imagePath);
+
+        setState(() {
+          imageFileUnint8List;
+        });
+      }
+    } catch (errorMsg) {
+      print(errorMsg.toString());
+      setState(() {
+        imageFileUnint8List = null;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return defaultScreen();
+    return imageFileUnint8List == null ? defaultScreen() : uploadFormScreen();
   }
 }
